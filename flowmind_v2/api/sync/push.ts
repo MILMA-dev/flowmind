@@ -1,6 +1,16 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import crypto from 'crypto';
 import { prisma } from '../client';
+import rateLimiter from '../middleware/rateLimiter';
 import { Priority, WorkflowStatus } from '@prisma/client';
+import {
+  NoteSchema,
+  TodoSchema,
+  CalendarEventSchema,
+  WorkflowSchema,
+  WorkflowNodeSchema,
+  WorkflowEdgeSchema,
+} from '../../src/core/security/ZodSchemas';
 
 interface ApiRequest extends IncomingMessage {
   query: { [key: string]: string | string[] | undefined };
@@ -12,6 +22,11 @@ interface ApiRequest extends IncomingMessage {
 interface ApiResponse extends ServerResponse {
   status: (statusCode: number) => ApiResponse;
   json: (body: unknown) => void;
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is not defined');
 }
 
 function setCors(res: ApiResponse): void {
@@ -31,25 +46,38 @@ function getUserIdFromRequest(req: ApiRequest): string {
     throw new Error('UNAUTHORIZED: Empty token');
   }
 
+  // Cryptographic signature checking of JWT token
   const parts = token.split('.');
-  if (parts.length === 3) {
-    try {
-      const payloadBase64 = parts[1];
-      const decodedPayload = Buffer.from(payloadBase64, 'base64').toString('utf8');
-      const payload = JSON.parse(decodedPayload) as { sub?: string; id?: string; userId?: string };
-      const userId = payload.sub || payload.id || payload.userId;
-      if (userId) {
-        return userId;
-      }
-    } catch {
-      // Fallback
-    }
+  if (parts.length !== 3) {
+    throw new Error('UNAUTHORIZED: Invalid JWT format');
   }
 
-  return token;
+  const [header, payload, signature] = parts;
+  const hmac = crypto.createHmac('sha256', JWT_SECRET);
+  hmac.update(`${header}.${payload}`);
+  const expectedSignature = hmac.digest('base64url');
+
+  if (signature !== expectedSignature) {
+    throw new Error('UNAUTHORIZED: JWT signature verification failed');
+  }
+
+  try {
+    const decodedPayload = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    // Expired verification
+    if (decodedPayload.exp && decodedPayload.exp < Math.floor(Date.now() / 1000)) {
+      throw new Error('UNAUTHORIZED: Token has expired');
+    }
+    const userId = decodedPayload.sub || decodedPayload.id || decodedPayload.userId;
+    if (userId) {
+      return userId;
+    }
+  } catch {
+    throw new Error('UNAUTHORIZED: Failed to decode JWT payload');
+  }
+
+  throw new Error('UNAUTHORIZED: User context missing in JWT');
 }
 
-// Read body helper for Vercel raw req/res handling (since body parser might not be present in all micro environments)
 async function getRequestBody(req: ApiRequest): Promise<any> {
   if (req.body) {
     return req.body;
@@ -70,6 +98,20 @@ async function getRequestBody(req: ApiRequest): Promise<any> {
   });
 }
 
+function runMiddleware(req: any, res: any, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+    if (res.writableEnded || res.finished) {
+      resolve(null);
+    }
+  });
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   if (typeof res.status !== 'function') {
     res.status = function (statusCode: number): ApiResponse {
@@ -83,6 +125,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       this.end(JSON.stringify(body));
     };
   }
+
+  // Apply Rate Limiter middleware
+  await runMiddleware(req, res, rateLimiter);
+  if (res.writableEnded) return;
 
   setCors(res);
 
@@ -109,7 +155,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       workflowEdges = [],
     } = body;
 
-    // Verify current user exists in database to maintain relation integrity, or create profile if not present
+    // Strict Input Validation & Cleansing with Zod
+    const validatedNotes = notes.map((item: any) => NoteSchema.parse(item));
+    const validatedTodos = todos.map((item: any) => TodoSchema.parse(item));
+    const validatedEvents = calendarEvents.map((item: any) => CalendarEventSchema.parse(item));
+    const validatedWorkflows = workflows.map((item: any) => WorkflowSchema.parse(item));
+    const validatedNodes = workflowNodes.map((item: any) => WorkflowNodeSchema.parse(item));
+    const validatedEdges = workflowEdges.map((item: any) => WorkflowEdgeSchema.parse(item));
+
+    // Ensure user profile profile exists in PostgreSQL
     await prisma.user.upsert({
       where: { id: userId },
       update: {},
@@ -120,13 +174,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       },
     });
 
-    // Execute in a single transactional batch
     await prisma.$transaction(async (tx) => {
-      // 1. Process Notes
-      for (const note of notes) {
+      // 1. Notes
+      for (const note of validatedNotes) {
         const id = note.id;
         if (note.deletedAt) {
-          // Soft-delete: update deletedAt to propagate
           await tx.note.upsert({
             where: { id },
             update: { deletedAt: new Date(note.deletedAt), updatedAt: new Date() },
@@ -165,10 +217,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
         }
       }
 
-      // 2. Process Todos
-      for (const todo of todos) {
+      // 2. Todos
+      for (const todo of validatedTodos) {
         const id = todo.id;
-        // Priority map helper
         const priorityVal: Priority =
           todo.priority === 'low'
             ? Priority.LOW
@@ -224,8 +275,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
         }
       }
 
-      // 3. Process CalendarEvents
-      for (const event of calendarEvents) {
+      // 3. CalendarEvents
+      for (const event of validatedEvents) {
         const id = event.id;
         if (event.deletedAt) {
           await tx.calendarEvent.upsert({
@@ -246,9 +297,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
             update: {
               title: event.title,
               description: event.description,
-              start: new Date(event.start || event.startDate),
-              end: new Date(event.end || event.endDate),
-              allDay: event.allDay || event.isAllDay || false,
+              start: new Date(event.start),
+              end: new Date(event.end),
+              allDay: event.allDay || false,
               color: event.color,
               linkedTaskId: event.linkedTaskId,
               linkedNoteId: event.linkedNoteId,
@@ -263,9 +314,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
               userId,
               title: event.title,
               description: event.description,
-              start: new Date(event.start || event.startDate),
-              end: new Date(event.end || event.endDate),
-              allDay: event.allDay || event.isAllDay || false,
+              start: new Date(event.start),
+              end: new Date(event.end),
+              allDay: event.allDay || false,
               color: event.color,
               linkedTaskId: event.linkedTaskId,
               linkedNoteId: event.linkedNoteId,
@@ -277,8 +328,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
         }
       }
 
-      // 4. Process Workflows
-      for (const wf of workflows) {
+      // 4. Workflows
+      for (const wf of validatedWorkflows) {
         const id = wf.id;
         const statusVal: WorkflowStatus =
           wf.status === 'DRAFT'
@@ -331,8 +382,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
         }
       }
 
-      // 5. Process WorkflowNodes (ensure the referenced workflows exist, or soft-delete them)
-      for (const node of workflowNodes) {
+      // 5. WorkflowNodes
+      for (const node of validatedNodes) {
         const id = node.id;
         if (node.deletedAt) {
           await tx.workflowNode.upsert({
@@ -350,10 +401,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
             },
           });
         } else {
-          // Double-check referenced workflow exists before adding node to avoid FK failure
           const wfExists = await tx.workflow.findUnique({ where: { id: node.workflowId } });
           if (!wfExists) {
-            // Generate dummy workflow if it doesn't exist yet in the batch
             await tx.workflow.create({
               data: {
                 id: node.workflowId,
@@ -415,8 +464,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
         }
       }
 
-      // 6. Process WorkflowEdges
-      for (const edge of workflowEdges) {
+      // 6. WorkflowEdges
+      for (const edge of validatedEdges) {
         const id = edge.id;
         if (edge.deletedAt) {
           await tx.workflowEdge.upsert({
@@ -432,7 +481,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
             },
           });
         } else {
-          // Double-check referenced workflow exists
           const wfExists = await tx.workflow.findUnique({ where: { id: edge.workflowId } });
           if (!wfExists) {
             await tx.workflow.create({

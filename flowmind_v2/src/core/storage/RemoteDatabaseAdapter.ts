@@ -23,6 +23,8 @@ function isBrowserOnline(cfg: StorageConfig): boolean {
   return true;
 }
 
+import { AuthService } from '../AuthService';
+
 class RemoteDatabaseAdapterImpl {
   private config: StorageConfig = { ...DEFAULT_CONFIG };
   private authToken: string | null = null;
@@ -85,7 +87,7 @@ class RemoteDatabaseAdapterImpl {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }
 
-    const res = await fetch(url, {
+    const res = await AuthService.secureFetch(url, {
       method: 'GET',
       headers,
     });
@@ -124,7 +126,7 @@ class RemoteDatabaseAdapterImpl {
       headers['Authorization'] = `Bearer ${this.authToken}`;
     }
 
-    const res = await fetch(url, {
+    const res = await AuthService.secureFetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(batch),
@@ -154,7 +156,7 @@ class RemoteDatabaseAdapterImpl {
           headers['Authorization'] = `Bearer ${this.authToken}`;
         }
 
-        const res = await fetch(url, { method: 'GET', headers });
+        const res = await AuthService.secureFetch(url, { method: 'GET', headers });
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`REMOTE_HTTP_${res.status}`);
         return (await res.json()) as ExtendedUserProfile;
@@ -192,7 +194,7 @@ class RemoteDatabaseAdapterImpl {
           headers['Authorization'] = `Bearer ${this.authToken}`;
         }
 
-        const res = await fetch(url, {
+        const res = await AuthService.secureFetch(url, {
           method: 'PUT',
           headers,
           body: JSON.stringify(payload),
