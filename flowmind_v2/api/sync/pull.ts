@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import crypto from 'crypto';
 import { prisma } from '../client';
+import rateLimiter from '../middleware/rateLimiter';
 
 interface ApiRequest extends IncomingMessage {
   query: { [key: string]: string | string[] | undefined };
@@ -11,6 +13,11 @@ interface ApiRequest extends IncomingMessage {
 interface ApiResponse extends ServerResponse {
   status: (statusCode: number) => ApiResponse;
   json: (body: unknown) => void;
+}
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is not defined');
 }
 
 function setCors(res: ApiResponse): void {
@@ -30,26 +37,53 @@ function getUserIdFromRequest(req: ApiRequest): string {
     throw new Error('UNAUTHORIZED: Empty token');
   }
 
+  // Pure cryptographic JWT signature verification against JWT_SECRET
   const parts = token.split('.');
-  if (parts.length === 3) {
-    try {
-      const payloadBase64 = parts[1];
-      const decodedPayload = Buffer.from(payloadBase64, 'base64').toString('utf8');
-      const payload = JSON.parse(decodedPayload) as { sub?: string; id?: string; userId?: string };
-      const userId = payload.sub || payload.id || payload.userId;
-      if (userId) {
-        return userId;
-      }
-    } catch {
-      // Fallback to raw token
-    }
+  if (parts.length !== 3) {
+    throw new Error('UNAUTHORIZED: Invalid JWT format');
   }
 
-  return token;
+  const [header, payload, signature] = parts;
+  const hmac = crypto.createHmac('sha256', JWT_SECRET);
+  hmac.update(`${header}.${payload}`);
+  const expectedSignature = hmac.digest('base64url');
+
+  if (signature !== expectedSignature) {
+    throw new Error('UNAUTHORIZED: JWT signature verification failed');
+  }
+
+  try {
+    const decodedPayload = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    // Verify token expiry
+    if (decodedPayload.exp && decodedPayload.exp < Math.floor(Date.now() / 1000)) {
+      throw new Error('UNAUTHORIZED: Token has expired');
+    }
+    const userId = decodedPayload.sub || decodedPayload.id || decodedPayload.userId;
+    if (userId) {
+      return userId;
+    }
+  } catch {
+    throw new Error('UNAUTHORIZED: Failed to decode JWT payload');
+  }
+
+  throw new Error('UNAUTHORIZED: User context missing in JWT');
+}
+
+function runMiddleware(req: any, res: any, fn: any) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result: any) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+    if (res.writableEnded || res.finished) {
+      resolve(null);
+    }
+  });
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
-  // Ensure status and json helpers are attached
   if (typeof res.status !== 'function') {
     res.status = function (statusCode: number): ApiResponse {
       this.statusCode = statusCode;
@@ -62,6 +96,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       this.end(JSON.stringify(body));
     };
   }
+
+  // Apply Rate Limiter middleware
+  await runMiddleware(req, res, rateLimiter);
+  if (res.writableEnded) return;
 
   setCors(res);
 
@@ -78,12 +116,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   try {
     const userId = getUserIdFromRequest(req);
 
-    // Extract lastSyncedAt
     const lastSyncedAtQuery = req.query.lastSyncedAt || req.query.lastSynced;
     const lastSyncedAtStr = Array.isArray(lastSyncedAtQuery) ? lastSyncedAtQuery[0] : lastSyncedAtQuery;
     const lastSyncedAt = lastSyncedAtStr ? new Date(lastSyncedAtStr) : new Date(0);
 
-    // Fetch updated/created/deleted entities since lastSyncedAt
     const [notes, todos, calendarEvents, workflows, workflowNodes, workflowEdges] = await Promise.all([
       prisma.note.findMany({
         where: {

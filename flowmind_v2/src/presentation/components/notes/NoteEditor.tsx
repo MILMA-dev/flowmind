@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { Note } from '../../../core/Types';
 import { NoteManager } from '../../../core/NoteManager';
+import SafeHTMLViewer from '../common/SafeHTMLViewer';
 
 /** Rendu Markdown minimal (titres, gras, italique, listes, code) */
 function renderMarkdown(src: string): string {
@@ -299,9 +300,9 @@ export default function NoteEditor({
           </div>
 
           {preview ? (
-            <div
-              className="fm-md-preview prose-invert min-h-[240px] text-sm text-zinc-300 leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: html || '<p class="text-zinc-600">Aperçu vide</p>' }}
+            <SafeHTMLViewer
+              content={html || '<p class="text-zinc-600">Aperçu vide</p>'}
+              className="fm-md-preview min-h-[240px]"
             />
           ) : (
             <textarea
