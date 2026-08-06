@@ -69,10 +69,46 @@ class BackupServiceImpl {
     } else {
       const st = obj.state as Record<string, unknown>;
       if (!st.ui) errors.push('state.ui manquant');
-      if (!Array.isArray(st.workflows)) errors.push('state.workflows doit être un tableau');
-      if (!Array.isArray(st.notes)) errors.push('state.notes doit être un tableau');
-      if (!Array.isArray(st.events)) errors.push('state.events doit être un tableau');
-      if (!Array.isArray(st.captures)) errors.push('state.captures doit être un tableau');
+
+      if (!Array.isArray(st.workflows)) {
+        errors.push('state.workflows doit être un tableau');
+      } else {
+        st.workflows.forEach((w: unknown, idx: number) => {
+          if (!w || typeof w !== 'object') {
+            errors.push(`state.workflows[${idx}] doit être un objet`);
+          }
+        });
+      }
+
+      if (!Array.isArray(st.notes)) {
+        errors.push('state.notes doit être un tableau');
+      } else {
+        st.notes.forEach((n: unknown, idx: number) => {
+          if (!n || typeof n !== 'object') {
+            errors.push(`state.notes[${idx}] doit être un objet`);
+          }
+        });
+      }
+
+      if (!Array.isArray(st.events)) {
+        errors.push('state.events doit être un tableau');
+      } else {
+        st.events.forEach((e: unknown, idx: number) => {
+          if (!e || typeof e !== 'object') {
+            errors.push(`state.events[${idx}] doit être un objet`);
+          }
+        });
+      }
+
+      if (!Array.isArray(st.captures)) {
+        errors.push('state.captures doit être un tableau');
+      } else {
+        st.captures.forEach((c: unknown, idx: number) => {
+          if (!c || typeof c !== 'object') {
+            errors.push(`state.captures[${idx}] doit être un objet`);
+          }
+        });
+      }
     }
 
     if (errors.length) return { ok: false, errors };

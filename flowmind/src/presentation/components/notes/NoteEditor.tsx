@@ -53,7 +53,15 @@ function renderMarkdown(src: string): string {
       .replace(/`(.+?)`/g, '<code class="fm-md-code">$1</code>')
       .replace(
         /\[(.+?)\]\((https?:\/\/[^\s)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noreferrer" class="text-indigo-400 underline">$1</a>'
+        (_, label, url) => {
+          const cleanUrl = url
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#x27;')
+            .replace(/`/g, '&#x60;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+          return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="text-indigo-400 underline">${label}</a>`;
+        }
       );
 
   for (const line of lines) {
