@@ -20,6 +20,8 @@ import { TodoManager } from './core/TodoManager';
 import { CalendarManager } from './core/CalendarManager';
 import { Sidebar, BottomBar, ZoneHeader } from './presentation/layouts/Navigation';
 import ViewManager from './presentation/ViewManager';
+import OfflineBanner from './presentation/components/common/OfflineBanner';
+import { OfflineQueueProcessor } from './core/services/OfflineQueueProcessor';
 import QuickCaptureModal, { CaptureFAB } from './presentation/components/QuickCaptureModal';
 import ToastStack from './presentation/components/ToastStack';
 import { useIsDesktop } from './hooks/useMediaQuery';
@@ -65,6 +67,7 @@ export default function App() {
     StateStore.hydrate();
 
     // Enregistrement des services applicatifs (écoute EventBus)
+    OfflineQueueProcessor.register();
     CaptureService.register();
     ConversionService.register();
     WorkflowEngine.register();
@@ -149,6 +152,7 @@ export default function App() {
 
                 <div className="relative flex-1 flex flex-col min-w-0 min-h-0">
                   <ZoneHeader />
+                  <OfflineBanner />
                   <main className="flex-1 min-h-0 flex flex-col pb-[4.75rem] lg:pb-0">
                     <ViewManager />
                   </main>

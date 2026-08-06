@@ -1,6 +1,6 @@
 /**
- * DataMerger — fusion granulaire Last-Write-Wins (LWW)
- * Compare item par item via updatedAt / createdAt
+ * DataMerger — Fusion granulaire au niveau des champs (Field-Level Merging)
+ * Basé sur une carte d'horodatages par propriété (_fieldUpdates).
  * Équipe MILMA Entreprise
  */
 
@@ -12,22 +12,77 @@ import type {
   NoteFolder,
 } from '../Types';
 
-type IdEntity = { id: string; updatedAt?: string; createdAt?: string };
+export type HasFieldUpdates = {
+  id: string;
+  updatedAt?: string;
+  createdAt?: string;
+  _fieldUpdates?: Record<string, string> | string; // Stocké sous forme d'objet ou de JSON stringifié en IndexedDB
+};
 
-function ts(e: IdEntity): number {
-  const t = e.updatedAt || e.createdAt;
-  return t ? new Date(t).getTime() : 0;
+/**
+ * Normalise les métadonnées _fieldUpdates en objet de clés-valeurs d'horodatages.
+ */
+export function parseFieldUpdates(entity: HasFieldUpdates): Record<string, string> {
+  if (!entity._fieldUpdates) return {};
+  if (typeof entity._fieldUpdates === 'string') {
+    try {
+      return JSON.parse(entity._fieldUpdates) as Record<string, string>;
+    } catch {
+      return {};
+    }
+  }
+  return entity._fieldUpdates;
 }
 
 /**
- * Fusionne deux tableaux d'entités par id.
- * L'horodatage le plus récent gagne pour chaque item.
- * Les items absents d'un côté sont conservés (union).
+ * Fusionne deux entités au niveau individuel de chaque propriété (Field-Level Merging).
+ * Compare chaque clé : en cas de conflit, conserve la valeur ayant l'horodatage le plus récent.
  */
-export function mergeByIdLWW<T extends IdEntity>(
-  local: T[],
-  remote: T[]
-): T[] {
+export function mergeEntitiesFLM<T extends HasFieldUpdates>(local: T, remote: T): T {
+  const localUpdates = parseFieldUpdates(local);
+  const remoteUpdates = parseFieldUpdates(remote);
+
+  const mergedUpdates: Record<string, string> = { ...localUpdates };
+  const mergedEntity: Record<string, any> = { ...local };
+
+  const allKeys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+
+  for (const key of allKeys) {
+    if (key === 'id' || key === '_fieldUpdates') continue;
+
+    const localTime = localUpdates[key] ? new Date(localUpdates[key]).getTime() : 0;
+    const remoteTime = remoteUpdates[key] ? new Date(remoteUpdates[key]).getTime() : 0;
+
+    if (remoteTime > localTime) {
+      mergedEntity[key] = remote[key as keyof T];
+      mergedUpdates[key] = remoteUpdates[key];
+    } else if (localTime > remoteTime) {
+      mergedEntity[key] = local[key as keyof T];
+      mergedUpdates[key] = localUpdates[key];
+    } else {
+      // Si les horodatages individuels sont identiques, on utilise la valeur locale (ou non-undefined)
+      if (remote[key as keyof T] !== undefined && local[key as keyof T] === undefined) {
+        mergedEntity[key] = remote[key as keyof T];
+      }
+    }
+  }
+
+  mergedEntity._fieldUpdates = mergedUpdates;
+
+  // Met à jour la date updatedAt globale à la plus récente
+  const localGlobal = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
+  const remoteGlobal = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+  mergedEntity.updatedAt = localGlobal >= remoteGlobal
+    ? local.updatedAt
+    : remote.updatedAt;
+
+  return mergedEntity as T;
+}
+
+/**
+ * Fusionne deux tableaux d'entités en appliquant le Field-Level Merging pour les doublons.
+ */
+export function mergeByIdLWW<T extends HasFieldUpdates>(local: T[], remote: T[]): T[] {
   const map = new Map<string, T>();
   for (const item of local) {
     map.set(item.id, item);
@@ -38,9 +93,8 @@ export function mergeByIdLWW<T extends IdEntity>(
       map.set(item.id, item);
       continue;
     }
-    if (ts(item) >= ts(existing)) {
-      map.set(item.id, item);
-    }
+    const merged = mergeEntitiesFLM(existing, item);
+    map.set(item.id, merged);
   }
   return Array.from(map.values());
 }
@@ -54,28 +108,33 @@ function mergeWorkflows(local: Workflow[], remote: Workflow[]): Workflow[] {
       map.set(w.id, w);
       continue;
     }
-    // LWW au niveau workflow, mais merge nodes/edges par id aussi
-    const newer = ts(w) >= ts(existing) ? w : existing;
-    const older = newer === w ? existing : w;
+
+    const mergedWf = mergeEntitiesFLM(
+      existing as unknown as HasFieldUpdates,
+      w as unknown as HasFieldUpdates
+    ) as unknown as Workflow;
+
+    // Fusionne également les nœuds et arêtes de manière granulaire
     const nodes = mergeByIdLWW(
-      older.nodes.map((n) => ({
+      (existing.nodes || []).map((n) => ({
         ...n,
-        updatedAt: (n as { updatedAt?: string }).updatedAt || newer.updatedAt,
-      })),
-      newer.nodes.map((n) => ({
+        updatedAt: (n as any).updatedAt || existing.updatedAt,
+      })) as unknown as HasFieldUpdates[],
+      (w.nodes || []).map((n) => ({
         ...n,
-        updatedAt: (n as { updatedAt?: string }).updatedAt || newer.updatedAt,
-      }))
+        updatedAt: (n as any).updatedAt || w.updatedAt,
+      })) as unknown as HasFieldUpdates[]
     );
-    // edges : par id simple (pas d'updatedAt) — union, préférer newer si même id
-    const edgeMap = new Map(older.edges.map((e) => [e.id, e]));
-    for (const e of newer.edges) edgeMap.set(e.id, e);
-    map.set(newer.id, {
-      ...newer,
-      nodes: nodes as Workflow['nodes'],
+
+    const edgeMap = new Map((existing.edges || []).map((e) => [e.id, e]));
+    for (const e of w.edges || []) {
+      edgeMap.set(e.id, e);
+    }
+
+    map.set(w.id, {
+      ...mergedWf,
+      nodes: nodes as unknown as Workflow['nodes'],
       edges: Array.from(edgeMap.values()),
-      updatedAt:
-        ts(w) >= ts(existing) ? w.updatedAt : existing.updatedAt,
     });
   }
   return Array.from(map.values());
@@ -90,30 +149,33 @@ function mergeTodoLists(local: TodoList[], remote: TodoList[]): TodoList[] {
       map.set(l.id, l);
       continue;
     }
-    const base = ts(l) >= ts(existing) ? l : existing;
-    const other = base === l ? existing : l;
-    // Merge items granulaire
+
+    const mergedList = mergeEntitiesFLM(
+      existing as unknown as HasFieldUpdates,
+      l as unknown as HasFieldUpdates
+    ) as unknown as TodoList;
+
     const items = mergeByIdLWW(
-      other.items.map((it) => ({
+      (existing.items || []).map((it) => ({
         ...it,
         updatedAt: it.completedAt || it.createdAt,
-      })),
-      base.items.map((it) => ({
+      })) as unknown as HasFieldUpdates[],
+      (l.items || []).map((it) => ({
         ...it,
         updatedAt: it.completedAt || it.createdAt,
-      }))
+      })) as unknown as HasFieldUpdates[]
     );
-    map.set(base.id, {
-      ...base,
-      items: items.map(({ updatedAt: _u, ...rest }) => rest) as TodoList['items'],
+
+    map.set(l.id, {
+      ...mergedList,
+      items: items as unknown as TodoList['items'],
     });
   }
   return Array.from(map.values());
 }
 
 /**
- * Fusionne deux AppState (local vs remote snapshot).
- * UI locale est préservée (activeZone, etc.) sauf si opts.replaceUI.
+ * Fusionne deux AppState complets (local vs remote snapshot).
  */
 export function mergeAppStates(
   local: AppState,
@@ -124,52 +186,56 @@ export function mergeAppStates(
     ...local,
     version: Math.max(local.version ?? 1, remote.version ?? 1),
     workflows: mergeWorkflows(local.workflows ?? [], remote.workflows ?? []),
-    notes: mergeByIdLWW(local.notes ?? [], remote.notes ?? []) as Note[],
+    notes: mergeByIdLWW((local.notes || []) as unknown as HasFieldUpdates[], (remote.notes || []) as unknown as HasFieldUpdates[]) as unknown as Note[],
     folders: mergeByIdLWW(
-      (local.folders ?? []) as (NoteFolder & IdEntity)[],
-      (remote.folders ?? []) as (NoteFolder & IdEntity)[]
-    ) as NoteFolder[],
-    tasks: mergeByIdLWW(local.tasks ?? [], remote.tasks ?? []) as Task[],
+      (local.folders || []) as unknown as HasFieldUpdates[],
+      (remote.folders || []) as unknown as HasFieldUpdates[]
+    ) as unknown as NoteFolder[],
+    tasks: mergeByIdLWW((local.tasks || []) as unknown as HasFieldUpdates[], (remote.tasks || []) as unknown as HasFieldUpdates[]) as unknown as Task[],
     todoLists: mergeTodoLists(local.todoLists ?? [], remote.todoLists ?? []),
     events: mergeByIdLWW(
-      (local.events ?? []) as (CalendarEvent & IdEntity)[],
-      (remote.events ?? []) as (CalendarEvent & IdEntity)[]
-    ) as CalendarEvent[],
+      (local.events || []) as unknown as HasFieldUpdates[],
+      (remote.events || []) as unknown as HasFieldUpdates[]
+    ) as unknown as CalendarEvent[],
     activities: mergeByIdLWW(
-      local.activities ?? [],
-      remote.activities ?? []
-    ) as Activity[],
+      (local.activities || []) as unknown as HasFieldUpdates[],
+      (remote.activities || []) as unknown as HasFieldUpdates[]
+    ) as unknown as Activity[],
     captures: mergeByIdLWW(
-      local.captures ?? [],
-      remote.captures ?? []
-    ) as BrainDumpItem[],
+      (local.captures || []) as unknown as HasFieldUpdates[],
+      (remote.captures || []) as unknown as HasFieldUpdates[]
+    ) as unknown as BrainDumpItem[],
     ui: opts?.preferRemoteUI
       ? { ...local.ui, ...remote.ui, quickCaptureOpen: false, settingsOpen: false }
       : {
           ...local.ui,
-          // conserve préférences locales de navigation
         },
     lastSavedAt: new Date().toISOString(),
   };
 }
 
 /**
- * Compare deux états : true si remote a au moins une entité plus récente
- * ou des ids inconnus localement.
+ * Indique si l'état distant contient des données plus récentes.
  */
 export function remoteHasNewerData(local: AppState, remote: AppState): boolean {
-  const checks: [IdEntity[], IdEntity[]][] = [
+  const ts = (e: any) => {
+    const t = e.updatedAt || e.createdAt;
+    return t ? new Date(t).getTime() : 0;
+  };
+
+  const checks: [any[], any[]][] = [
     [local.notes, remote.notes],
     [local.tasks, remote.tasks],
     [local.workflows, remote.workflows],
-    [local.events as IdEntity[], remote.events as IdEntity[]],
+    [local.events, remote.events],
     [local.activities ?? [], remote.activities ?? []],
     [local.captures, remote.captures],
     [local.todoLists, remote.todoLists],
   ];
+
   for (const [loc, rem] of checks) {
-    const map = new Map(loc.map((i) => [i.id, ts(i)]));
-    for (const r of rem) {
+    const map = new Map((loc || []).map((i) => [i.id, ts(i)]));
+    for (const r of rem || []) {
       const lt = map.get(r.id);
       if (lt === undefined) return true;
       if (ts(r) > lt) return true;
@@ -179,6 +245,7 @@ export function remoteHasNewerData(local: AppState, remote: AppState): boolean {
 }
 
 export const DataMerger = {
+  mergeEntitiesFLM,
   mergeByIdLWW,
   mergeAppStates,
   mergeWorkflows,
