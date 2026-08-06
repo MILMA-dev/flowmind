@@ -1,0 +1,185 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model User {
+  id            String          @id
+  email         String          @unique
+  displayName   String
+  emailVerified Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  deletedAt     DateTime?
+  syncedAt      DateTime?
+  lastLoginAt   DateTime?
+  avatarUrl     String?
+  role          String?
+  bio           String?
+  preferences   Json?
+
+  notes          Note[]
+  todos          Todo[]
+  calendarEvents CalendarEvent[]
+  workflows      Workflow[]
+  workflowNodes  WorkflowNode[]
+  workflowEdges  WorkflowEdge[]
+
+  @@index([id, updatedAt])
+}
+
+model Note {
+  id         String    @id
+  title      String
+  content    String    @db.Text
+  folderId   String?
+  tags       Json      @default("[]")
+  pinned     Boolean   @default(false)
+  isArchived Boolean   @default(false)
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+  syncedAt   DateTime?
+
+  @@index([userId, updatedAt])
+}
+
+model Todo {
+  id          String    @id
+  title       String
+  description String?   @db.Text
+  status      String?   @default("active")
+  priority    Priority  @default(MEDIUM)
+  dueDate     DateTime?
+  listId      String?
+  listName    String?
+  tags        Json      @default("[]")
+  completedAt DateTime?
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  syncedAt    DateTime?
+
+  @@index([userId, updatedAt])
+}
+
+model CalendarEvent {
+  id               String    @id
+  title            String
+  description      String?   @db.Text
+  start            DateTime
+  end              DateTime
+  allDay           Boolean   @default(false)
+  color            String?
+  linkedTaskId     String?
+  linkedNoteId     String?
+  linkedNodeId     String?
+  linkedWorkflowId String?
+  triggerFiredAt   DateTime?
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+  syncedAt         DateTime?
+
+  @@index([userId, updatedAt])
+}
+
+model Workflow {
+  id          String         @id
+  title       String
+  description String?        @db.Text
+  status      WorkflowStatus @default(DRAFT)
+  tags        Json           @default("[]")
+  color       String?
+  runStatus   String?
+  lastRunAt   DateTime?
+  viewport    Json?
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  deletedAt   DateTime?
+  syncedAt    DateTime?
+
+  nodes WorkflowNode[]
+  edges WorkflowEdge[]
+
+  @@index([userId, updatedAt])
+}
+
+model WorkflowNode {
+  id                String    @id
+  workflowId        String
+  workflow          Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  type              String
+  label             String
+  x                 Float
+  y                 Float
+  description       String?   @db.Text
+  data              Json?
+  priority          String    @default("medium")
+  status            String    @default("ready")
+  executionState    String    @default("ready")
+  dueDate           DateTime?
+  subtasks          Json      @default("[]")
+  recurrence        Json?
+  progress          Float     @default(0)
+  trigger           Json?
+  joinMode          String    @default("all")
+  executionStrategy String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+  syncedAt          DateTime?
+
+  @@index([userId, updatedAt])
+}
+
+model WorkflowEdge {
+  id           String    @id
+  workflowId   String
+  workflow     Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  source       String
+  target       String
+  sourceHandle String?
+  targetHandle String?
+  label        String?
+  activation   String?
+  sourceSlot   Int?
+  targetSlot   Int?
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+  syncedAt     DateTime?
+
+  @@index([userId, updatedAt])
+}
