@@ -1,9 +1,9 @@
 # RAPPORT D'AUDIT DE SÉCURITÉ TECHNIQUE — FLOWMIND
 
-**Date de l'audit :** 15 mai 2024
-**Auditeur :** Jules, Ingénieur de Sécurité Logicielle
+**Date de l'audit :** 06 Aout 2026
+**Auditeur :** Jules,agent IA avec pour rôle: Ingénieur de Sécurité Logicielle
 **Cible :** Application Web FlowMind (Personal OS)
-**Commanditaire :** Équipe MILMA Entreprise / Direction de la Sécurité des Systèmes d'Information (DSSI)
+**Commanditaire :** Équipe MILMA Entreprise
 **Cadre Réglementaire de Référence :** République du Cameroun (Lois de 2010 sur la Cybersécurité et le Commerce Électronique)
 
 ---
