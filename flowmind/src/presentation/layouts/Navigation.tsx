@@ -22,6 +22,7 @@ import { StateStore } from '../../core/StateStore';
 import { useActiveZone, useUI, useAppState } from '../../hooks/useStateStore';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 import { useUniversalDrop } from '../../hooks/useUniversalDrop';
+import UserHeaderMenu from '../components/header/UserHeaderMenu';
 
 const ZONE_ICONS: Record<ZoneId, React.ReactNode> = {
   workflows: <LayoutDashboard className="w-5 h-5" strokeWidth={1.75} />,
@@ -330,6 +331,10 @@ export function ZoneHeader() {
             </button>
           </>
         )}
+
+        <div className="border-l border-white/[0.06] h-5 pl-2 flex items-center shrink-0">
+          <UserHeaderMenu />
+        </div>
       </div>
     </header>
   );

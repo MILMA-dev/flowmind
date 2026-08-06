@@ -976,3 +976,22 @@ export interface AuthState {
   loading: boolean;
   error: string | null;
 }
+
+// ─── Profil Utilisateur et mise à jour ───────────────────
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  fullName: string;
+  role: string;
+  avatarUrl?: string;
+  themePreference?: string;
+  updatedAt: string;
+}
+
+export interface ProfileUpdatePayload {
+  fullName?: string;
+  role?: string;
+  avatarUrl?: string;
+  themePreference?: string;
+}
