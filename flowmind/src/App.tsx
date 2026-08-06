@@ -30,6 +30,7 @@ import ConversionPreviewModal from './presentation/components/modals/ConversionP
 import MicroFeedback from './presentation/components/ui/MicroFeedback';
 import TouchDragOverlay from './presentation/components/ui/TouchDragOverlay';
 import { Analytics } from '@vercel/analytics/react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function BootScreen() {
   return (
@@ -159,6 +160,7 @@ export default function App() {
           <MicroFeedback />
         </div>
         <Analytics />
+        <SpeedInsights />
       </DragDropProvider>
     </ThemeProvider>
   );
