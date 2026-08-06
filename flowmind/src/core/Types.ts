@@ -954,3 +954,25 @@ export const ENTITY_TO_MIME: Record<UniversalEntityType, string> = {
   calendar_event: DRAG_TYPES.CALENDAR_EVENT,
   workflow_node: DRAG_TYPES.WORKFLOW_NODE,
 };
+
+// ─── Authentification, Session et Credentials ───────────
+
+export interface Credentials {
+  email: string;
+  password?: string;
+}
+
+export interface UserSession {
+  uid: string;
+  email: string;
+  emailVerified: boolean;
+  accessToken: string;
+  displayName?: string;
+  createdAt: string;
+}
+
+export interface AuthState {
+  user: UserSession | null;
+  loading: boolean;
+  error: string | null;
+}

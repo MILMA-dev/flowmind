@@ -22,8 +22,12 @@ import {
   Download,
   Upload,
   FileJson,
+  LogOut,
+  UserCheck,
 } from 'lucide-react';
 import { useAppState } from '../../hooks/useStateStore';
+import { useAuth } from '../context/AuthContext';
+import ProtectedRoute from '../components/auth/ProtectedRoute';
 import { WorkflowEngine } from '../../core/WorkflowEngine';
 import { ExecutionEngine } from '../../core/ExecutionEngine';
 import { TriggerService } from '../../core/TriggerService';
@@ -387,8 +391,17 @@ function AddNodeMenu({
 }
 
 export default function WorkflowView() {
+  return (
+    <ProtectedRoute>
+      <WorkflowViewContent />
+    </ProtectedRoute>
+  );
+}
+
+function WorkflowViewContent() {
   const state = useAppState();
   const { workflows, ui } = state;
+  const { user, signOut } = useAuth();
   const activeId = ui.activeWorkflowId;
   const active = useMemo(
     () => workflows.find((w) => w.id === activeId) ?? workflows[0] ?? null,
@@ -495,6 +508,21 @@ export default function WorkflowView() {
               <Plus className="w-3.5 h-3.5" />
               Nouveau Workflow
             </button>
+          )}
+
+          {user && (
+            <div className="flex items-center gap-1.5 border-l border-white/[0.08] pl-3 ml-1 text-xs text-zinc-500 shrink-0">
+              <UserCheck className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden lg:inline text-zinc-400 font-medium truncate max-w-[100px]">{user.displayName || user.email}</span>
+              <button
+                type="button"
+                onClick={() => signOut()}
+                className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+                title="Se déconnecter"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           )}
         </div>
       </div>

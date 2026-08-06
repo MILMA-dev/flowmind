@@ -25,6 +25,7 @@ import ToastStack from './presentation/components/ToastStack';
 import { useIsDesktop } from './hooks/useMediaQuery';
 import { DragDropProvider } from './context/DragDropContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './presentation/context/AuthContext';
 import DropZoneOverlay from './presentation/components/common/DropZoneOverlay';
 import ConversionPreviewModal from './presentation/components/modals/ConversionPreviewModal';
 import MicroFeedback from './presentation/components/ui/MicroFeedback';
@@ -126,9 +127,10 @@ export default function App() {
   if (!ready) return <BootScreen />;
 
   return (
-    <ThemeProvider>
-      <DragDropProvider>
-        <div className="h-dvh flex overflow-hidden bg-[var(--fm-surface-0,#07080c)] text-[var(--fm-text,#f4f4f5)] antialiased">
+    <AuthProvider>
+      <ThemeProvider>
+        <DragDropProvider>
+          <div className="h-dvh flex overflow-hidden bg-[var(--fm-surface-0,#07080c)] text-[var(--fm-text,#f4f4f5)] antialiased">
           {/* Ambient glow */}
           <div
             className="pointer-events-none fixed inset-0 opacity-40 theme-light:opacity-20"
@@ -156,8 +158,9 @@ export default function App() {
           <TouchDragOverlay />
           <ConversionPreviewModal />
           <MicroFeedback />
-        </div>
-      </DragDropProvider>
-    </ThemeProvider>
+          </div>
+        </DragDropProvider>
+      </ThemeProvider>
+    </AuthProvider>
   );
 }
