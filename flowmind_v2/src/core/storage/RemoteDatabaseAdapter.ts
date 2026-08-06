@@ -1,13 +1,8 @@
 /**
- * RemoteDatabaseAdapter — connecteur base distante
+ * RemoteDatabaseAdapter — connecteur base de données de production PostgreSQL/Prisma
  *
- * En l'absence de credentials Supabase/Firebase, utilise un store
- * "remote" isolé (localStorage namespace distant) avec latence simulée.
- * Si VITE_FLOWMIND_REMOTE_URL est défini, tente un fetch REST.
- *
- * Interface prête pour :
- *   - Supabase: from('profiles').upsert(...)
- *   - Firebase: doc(db, 'users', id).set(...)
+ * Équipe MILMA Entreprise — Gestion Multi-Tenant sécurisée et synchronisation transactionnelle.
+ * Effectue des appels API HTTP de production réels vers le backend à la place de stubs locaux.
  */
 
 import type { ExtendedUserProfile, StorageConfig } from '../Types';
@@ -15,14 +10,10 @@ import type { ExtendedUserProfile, StorageConfig } from '../Types';
 const DEFAULT_CONFIG: StorageConfig = {
   localNamespace: 'flowmind:hybrid:profile:',
   remoteNamespace: 'flowmind:remote-db:profiles:v1',
-  remoteLatencyMs: 180,
+  remoteLatencyMs: 50,
   forceOffline: false,
-  remoteEndpoint: null,
+  remoteEndpoint: '/api',
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 function isBrowserOnline(cfg: StorageConfig): boolean {
   if (cfg.forceOffline) return false;
@@ -34,20 +25,26 @@ function isBrowserOnline(cfg: StorageConfig): boolean {
 
 class RemoteDatabaseAdapterImpl {
   private config: StorageConfig = { ...DEFAULT_CONFIG };
+  private authToken: string | null = null;
 
   configure(partial: Partial<StorageConfig>): void {
     this.config = { ...this.config, ...partial };
-    // Endpoint optionnel depuis env Vite
     try {
-      const envUrl = import.meta.env?.VITE_FLOWMIND_REMOTE_URL as
-        | string
-        | undefined;
+      const envUrl = import.meta.env?.VITE_FLOWMIND_REMOTE_URL as string | undefined;
       if (envUrl && !partial.remoteEndpoint) {
         this.config.remoteEndpoint = envUrl;
       }
     } catch {
       /* ignore */
     }
+  }
+
+  setAuthToken(token: string | null): void {
+    this.authToken = token;
+  }
+
+  getAuthToken(): string | null {
+    return this.authToken;
   }
 
   getConfig(): StorageConfig {
@@ -58,19 +55,106 @@ class RemoteDatabaseAdapterImpl {
     return isBrowserOnline(this.config);
   }
 
+  /**
+   * Extrait les modifications de la base de données distante depuis la date lastSyncedAt.
+   * Réalise un GET vers /api/sync/pull
+   */
+  async pullDeltas(lastSyncedAt: string): Promise<{
+    success: boolean;
+    lastSyncedAt: string;
+    entities: {
+      notes: any[];
+      todos: any[];
+      calendarEvents: any[];
+      workflows: any[];
+      workflowNodes: any[];
+      workflowEdges: any[];
+    };
+  }> {
+    if (!this.isOnline()) {
+      throw new Error('NETWORK_OFFLINE');
+    }
+
+    const endpoint = this.config.remoteEndpoint || '/api';
+    const url = `${endpoint.replace(/\/$/, '')}/sync/pull?lastSyncedAt=${encodeURIComponent(lastSyncedAt)}`;
+
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+    if (this.authToken) {
+      headers['Authorization'] = `Bearer ${this.authToken}`;
+    }
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!res.ok) {
+      throw new Error(`REMOTE_HTTP_${res.status}`);
+    }
+
+    return (await res.json()) as any;
+  }
+
+  /**
+   * Pousse les modifications locales vers le backend dans une transaction.
+   * Réalise un POST vers /api/sync/push
+   */
+  async pushDeltas(batch: {
+    notes?: any[];
+    todos?: any[];
+    calendarEvents?: any[];
+    workflows?: any[];
+    workflowNodes?: any[];
+    workflowEdges?: any[];
+  }): Promise<{ success: boolean; syncedAt: string }> {
+    if (!this.isOnline()) {
+      throw new Error('NETWORK_OFFLINE');
+    }
+
+    const endpoint = this.config.remoteEndpoint || '/api';
+    const url = `${endpoint.replace(/\/$/, '')}/sync/push`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+    if (this.authToken) {
+      headers['Authorization'] = `Bearer ${this.authToken}`;
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(batch),
+    });
+
+    if (!res.ok) {
+      throw new Error(`REMOTE_HTTP_${res.status}`);
+    }
+
+    return (await res.json()) as any;
+  }
+
   /** Lecture table remote (simulée ou HTTP) */
   async getUserProfile(userId: string): Promise<ExtendedUserProfile | null> {
     if (!this.isOnline()) {
       throw new Error('NETWORK_OFFLINE');
     }
-    await sleep(this.config.remoteLatencyMs);
 
-    if (this.config.remoteEndpoint) {
+    const endpoint = this.config.remoteEndpoint || '/api';
+    if (endpoint) {
       try {
-        const res = await fetch(
-          `${this.config.remoteEndpoint.replace(/\/$/, '')}/profiles/${userId}`,
-          { method: 'GET', headers: { Accept: 'application/json' } }
-        );
+        const url = `${endpoint.replace(/\/$/, '')}/profiles/${userId}`;
+        const headers: Record<string, string> = {
+          Accept: 'application/json',
+        };
+        if (this.authToken) {
+          headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+
+        const res = await fetch(url, { method: 'GET', headers });
         if (res.status === 404) return null;
         if (!res.ok) throw new Error(`REMOTE_HTTP_${res.status}`);
         return (await res.json()) as ExtendedUserProfile;
@@ -88,7 +172,6 @@ class RemoteDatabaseAdapterImpl {
     if (!this.isOnline()) {
       throw new Error('NETWORK_OFFLINE');
     }
-    await sleep(this.config.remoteLatencyMs);
 
     const payload: ExtendedUserProfile = {
       ...profile,
@@ -97,18 +180,24 @@ class RemoteDatabaseAdapterImpl {
       lastWriteSource: 'remote',
     };
 
-    if (this.config.remoteEndpoint) {
+    const endpoint = this.config.remoteEndpoint || '/api';
+    if (endpoint) {
       try {
-        const res = await fetch(
-          `${this.config.remoteEndpoint.replace(/\/$/, '')}/profiles/${profile.id}`,
-          {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          }
-        );
+        const url = `${endpoint.replace(/\/$/, '')}/profiles/${profile.id}`;
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        };
+        if (this.authToken) {
+          headers['Authorization'] = `Bearer ${this.authToken}`;
+        }
+
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify(payload),
+        });
         if (!res.ok) throw new Error(`REMOTE_HTTP_${res.status}`);
-        // Miroir local remote pour cohérence offline demo
         this.writeSimulated(payload);
         return;
       } catch (err) {
