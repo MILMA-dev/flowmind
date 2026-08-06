@@ -29,6 +29,7 @@ import DropZoneOverlay from './presentation/components/common/DropZoneOverlay';
 import ConversionPreviewModal from './presentation/components/modals/ConversionPreviewModal';
 import MicroFeedback from './presentation/components/ui/MicroFeedback';
 import TouchDragOverlay from './presentation/components/ui/TouchDragOverlay';
+import { Analytics } from '@vercel/analytics/react';
 
 function BootScreen() {
   return (
@@ -157,6 +158,7 @@ export default function App() {
           <ConversionPreviewModal />
           <MicroFeedback />
         </div>
+        <Analytics />
       </DragDropProvider>
     </ThemeProvider>
   );
