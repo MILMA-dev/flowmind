@@ -21,8 +21,8 @@ export default async function handler(req: IncomingMessage, res: ApiResponse): P
   }
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Secret, Accept');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -30,35 +30,32 @@ export default async function handler(req: IncomingMessage, res: ApiResponse): P
   }
 
   try {
-    const emailNorm = 'millemayake@gmail.com';
+    const adminSecret = process.env.ADMIN_CLEANUP_SECRET;
+    const reqSecret = req.headers['x-admin-secret'];
 
-    // Recherche de l'utilisateur de test en base
-    const user = await prisma.user.findUnique({
-      where: { email: emailNorm },
-    });
-
-    if (user) {
-      // Nettoyage en cascade de toutes les entités associées en base de données
-      await prisma.$transaction([
-        prisma.note.deleteMany({ where: { userId: user.id } }),
-        prisma.todo.deleteMany({ where: { userId: user.id } }),
-        prisma.calendarEvent.deleteMany({ where: { userId: user.id } }),
-        prisma.workflowNode.deleteMany({ where: { userId: user.id } }),
-        prisma.workflowEdge.deleteMany({ where: { userId: user.id } }),
-        prisma.workflow.deleteMany({ where: { userId: user.id } }),
-        prisma.user.delete({ where: { id: user.id } }),
-      ]);
-
-      res.status(200).json({
-        success: true,
-        message: `L'utilisateur ${emailNorm} et toutes ses données associées ont été supprimés avec succès du serveur PostgreSQL.`,
+    // Protection stricte: Si le secret n'est pas configuré sur le serveur, ou s'il ne correspond pas au secret envoyé dans les en-têtes, on rejette immédiatement la requête.
+    if (!adminSecret || reqSecret !== adminSecret) {
+      res.status(401).json({
+        success: false,
+        error: 'Unauthorized: Invalid or missing X-Admin-Secret header.',
       });
       return;
     }
 
+    // Purge de l'ensemble de la base de données PostgreSQL pour réinitialiser le code de production à zéro
+    await prisma.$transaction([
+      prisma.note.deleteMany({}),
+      prisma.todo.deleteMany({}),
+      prisma.calendarEvent.deleteMany({}),
+      prisma.workflowNode.deleteMany({}),
+      prisma.workflowEdge.deleteMany({}),
+      prisma.workflow.deleteMany({}),
+      prisma.user.deleteMany({}),
+    ]);
+
     res.status(200).json({
       success: true,
-      message: `L'utilisateur ${emailNorm} n'existe pas ou a déjà été supprimé de la base de données du serveur.`,
+      message: 'Base de données de production entièrement réinitialisée à zéro. Tous les utilisateurs et entités ont été supprimés avec succès.',
     });
   } catch (error) {
     res.status(500).json({
