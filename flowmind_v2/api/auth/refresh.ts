@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import crypto from 'crypto';
-import { prisma } from '../client';
+import { prisma } from '../client.js';
 
 interface ApiRequest extends IncomingMessage {
   headers: IncomingMessage['headers'];
