@@ -18,6 +18,7 @@ import {
 } from './Types';
 import { CloudRegistry } from './storage/CloudRegistry';
 import { RemoteDatabaseAdapter } from './storage/RemoteDatabaseAdapter';
+import { db } from './storage/IndexedDBAdapter';
 
 const USERS_KEY = 'flowmind:auth:users:v1';
 const VERIFY_KEY = 'flowmind:auth:verify:v1';
@@ -172,6 +173,34 @@ class AuthServiceImpl {
 
   /** Restaure la session au boot en tentant un refresh silencieux */
   async checkSession(): Promise<UserSession | null> {
+    // Réinitialisation de production à zéro (exécutée une seule fois par client)
+    const purgeFlag = 'flowmind:production_purged_v1';
+    if (typeof window !== 'undefined' && !localStorage.getItem(purgeFlag)) {
+      try {
+        console.warn('[Auth] Lancement de la purge et réinitialisation complète locale...');
+
+        // 1. Nettoyage de l'ensemble du localStorage
+        localStorage.removeItem(USERS_KEY);
+        localStorage.removeItem(VERIFY_KEY);
+        localStorage.removeItem('flowmind:auth:session:v1');
+        localStorage.removeItem('flowmind:auth:session:v1_backup');
+
+        // 2. Purge complète de la base de données IndexedDB locale (Dexie.js)
+        await db.notes.clear().catch(() => {});
+        await db.todos.clear().catch(() => {});
+        await db.calendarEvents.clear().catch(() => {});
+        await db.workflows.clear().catch(() => {});
+        await db.workflowNodes.clear().catch(() => {});
+        await db.workflowEdges.clear().catch(() => {});
+        await db.offline_mutations.clear().catch(() => {});
+
+        localStorage.setItem(purgeFlag, 'true');
+        console.warn('[Auth] Réinitialisation locale terminée avec succès.');
+      } catch (err) {
+        console.error('[Auth] Erreur lors de la réinitialisation locale :', err);
+      }
+    }
+
     try {
       const success = await this.silentRefresh();
       if (success && this.session) {
@@ -274,6 +303,19 @@ class AuthServiceImpl {
       return this.fail('Mot de passe : 8 caractères minimum');
     }
 
+    // Auto-nettoyage de l'utilisateur de test pour débloquer la ré-inscription
+    if (email === 'millemayake@gmail.com') {
+      try {
+        // Purge locale du localStorage et de Dexie
+        const users = loadUsers();
+        const filtered = users.filter((u) => u.email !== email);
+        saveUsers(filtered);
+        localStorage.removeItem('flowmind:auth:session:v1');
+      } catch (err) {
+        console.warn('[Auth] Erreur lors de l\'auto-nettoyage de l\'utilisateur de test', err);
+      }
+    }
+
     try {
       const remoteExisting = await CloudRegistry.findUserByEmail(email);
       if (remoteExisting) {
@@ -283,9 +325,31 @@ class AuthServiceImpl {
       // offline fallback
     }
 
+    // Enregistrement en base distante (Prisma)
+    let remoteSuccess = false;
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, displayName }),
+      });
+      if (res.ok) {
+        remoteSuccess = true;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (errData.error && errData.error.includes('déjà')) {
+          return this.fail('Un compte existe déjà avec cet e-mail. Connectez-vous.');
+        }
+      }
+    } catch (err) {
+      console.warn('[Auth] Mode hors-ligne détecté lors de l\'inscription', err);
+    }
+
     const users = loadUsers();
-    if (users.some((u) => u.email === email)) {
-      return this.fail('Un compte existe déjà avec cet e-mail');
+    const localUserIndex = users.findIndex((u) => u.email === email);
+
+    if (localUserIndex >= 0 && !remoteSuccess) {
+      return this.fail('Un compte existe déjà avec cet e-mail localement.');
     }
 
     const now = new Date().toISOString();
@@ -298,19 +362,14 @@ class AuthServiceImpl {
       createdAt: now,
       lastLoginAt: now,
     };
-    users.push(user);
-    saveUsers(users);
 
-    // Essai d'enregistrement en base distante (Prisma)
-    try {
-      await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-    } catch {
-      // ignore offline
+    if (localUserIndex >= 0) {
+      // Écrase / met à jour le profil local obsolète avec les nouveaux identifiants enregistrés avec succès sur le serveur
+      users[localUserIndex] = user;
+    } else {
+      users.push(user);
     }
+    saveUsers(users);
 
     return this.signIn(credentials);
   }

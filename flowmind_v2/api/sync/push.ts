@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import crypto from 'crypto';
-import { prisma } from '../client';
-import rateLimiter from '../middleware/rateLimiter';
+import { prisma } from '../client.js';
+import rateLimiter from '../middleware/rateLimiter.js';
 import { Priority, WorkflowStatus } from '@prisma/client';
 import {
   NoteSchema,
@@ -10,7 +10,7 @@ import {
   WorkflowSchema,
   WorkflowNodeSchema,
   WorkflowEdgeSchema,
-} from '../../src/core/security/ZodSchemas';
+} from '../../src/core/security/ZodSchemas.js';
 
 interface ApiRequest extends IncomingMessage {
   query: { [key: string]: string | string[] | undefined };
