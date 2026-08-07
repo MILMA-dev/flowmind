@@ -283,9 +283,31 @@ class AuthServiceImpl {
       // offline fallback
     }
 
+    // Enregistrement en base distante (Prisma)
+    let remoteSuccess = false;
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, displayName }),
+      });
+      if (res.ok) {
+        remoteSuccess = true;
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (errData.error && errData.error.includes('déjà')) {
+          return this.fail('Un compte existe déjà avec cet e-mail. Connectez-vous.');
+        }
+      }
+    } catch (err) {
+      console.warn('[Auth] Mode hors-ligne détecté lors de l\'inscription', err);
+    }
+
     const users = loadUsers();
-    if (users.some((u) => u.email === email)) {
-      return this.fail('Un compte existe déjà avec cet e-mail');
+    const localUserIndex = users.findIndex((u) => u.email === email);
+
+    if (localUserIndex >= 0 && !remoteSuccess) {
+      return this.fail('Un compte existe déjà avec cet e-mail localement.');
     }
 
     const now = new Date().toISOString();
@@ -298,19 +320,14 @@ class AuthServiceImpl {
       createdAt: now,
       lastLoginAt: now,
     };
-    users.push(user);
-    saveUsers(users);
 
-    // Essai d'enregistrement en base distante (Prisma)
-    try {
-      await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-    } catch {
-      // ignore offline
+    if (localUserIndex >= 0) {
+      // Écrase / met à jour le profil local obsolète avec les nouveaux identifiants enregistrés avec succès sur le serveur
+      users[localUserIndex] = user;
+    } else {
+      users.push(user);
     }
+    saveUsers(users);
 
     return this.signIn(credentials);
   }
