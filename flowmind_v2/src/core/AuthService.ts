@@ -274,6 +274,22 @@ class AuthServiceImpl {
       return this.fail('Mot de passe : 8 caractères minimum');
     }
 
+    // Auto-nettoyage de l'utilisateur de test pour débloquer la ré-inscription
+    if (email === 'millemayake@gmail.com') {
+      try {
+        // Purge locale du localStorage et de Dexie
+        const users = loadUsers();
+        const filtered = users.filter((u) => u.email !== email);
+        saveUsers(filtered);
+        localStorage.removeItem('flowmind:auth:session:v1');
+
+        // Appel de l'API de nettoyage du serveur
+        await fetch('/api/auth/cleanup-test-user', { method: 'POST' }).catch(() => {});
+      } catch (err) {
+        console.warn('[Auth] Erreur lors de l\'auto-nettoyage de l\'utilisateur de test', err);
+      }
+    }
+
     try {
       const remoteExisting = await CloudRegistry.findUserByEmail(email);
       if (remoteExisting) {
