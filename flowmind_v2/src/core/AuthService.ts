@@ -18,6 +18,7 @@ import {
 } from './Types';
 import { CloudRegistry } from './storage/CloudRegistry';
 import { RemoteDatabaseAdapter } from './storage/RemoteDatabaseAdapter';
+import { db } from './storage/IndexedDBAdapter';
 
 const USERS_KEY = 'flowmind:auth:users:v1';
 const VERIFY_KEY = 'flowmind:auth:verify:v1';
@@ -172,6 +173,34 @@ class AuthServiceImpl {
 
   /** Restaure la session au boot en tentant un refresh silencieux */
   async checkSession(): Promise<UserSession | null> {
+    // Réinitialisation de production à zéro (exécutée une seule fois par client)
+    const purgeFlag = 'flowmind:production_purged_v1';
+    if (typeof window !== 'undefined' && !localStorage.getItem(purgeFlag)) {
+      try {
+        console.warn('[Auth] Lancement de la purge et réinitialisation complète locale...');
+
+        // 1. Nettoyage de l'ensemble du localStorage
+        localStorage.removeItem(USERS_KEY);
+        localStorage.removeItem(VERIFY_KEY);
+        localStorage.removeItem('flowmind:auth:session:v1');
+        localStorage.removeItem('flowmind:auth:session:v1_backup');
+
+        // 2. Purge complète de la base de données IndexedDB locale (Dexie.js)
+        await db.notes.clear().catch(() => {});
+        await db.todos.clear().catch(() => {});
+        await db.calendarEvents.clear().catch(() => {});
+        await db.workflows.clear().catch(() => {});
+        await db.workflowNodes.clear().catch(() => {});
+        await db.workflowEdges.clear().catch(() => {});
+        await db.offline_mutations.clear().catch(() => {});
+
+        localStorage.setItem(purgeFlag, 'true');
+        console.warn('[Auth] Réinitialisation locale terminée avec succès.');
+      } catch (err) {
+        console.error('[Auth] Erreur lors de la réinitialisation locale :', err);
+      }
+    }
+
     try {
       const success = await this.silentRefresh();
       if (success && this.session) {
@@ -282,9 +311,6 @@ class AuthServiceImpl {
         const filtered = users.filter((u) => u.email !== email);
         saveUsers(filtered);
         localStorage.removeItem('flowmind:auth:session:v1');
-
-        // Appel de l'API de nettoyage du serveur
-        await fetch('/api/auth/cleanup-test-user', { method: 'POST' }).catch(() => {});
       } catch (err) {
         console.warn('[Auth] Erreur lors de l\'auto-nettoyage de l\'utilisateur de test', err);
       }
