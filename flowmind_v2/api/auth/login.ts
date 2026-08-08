@@ -27,7 +27,7 @@ function signToken(payload: Record<string, any>, expirySeconds: number): string 
   };
   const encodedPayload = Buffer.from(JSON.stringify(payloadWithExpiry)).toString('base64url');
 
-  const hmac = crypto.createHmac('sha256', JWT_SECRET);
+  const hmac = crypto.createHmac('sha256', JWT_SECRET!);
   hmac.update(`${encodedHeader}.${encodedPayload}`);
   const signature = hmac.digest('base64url');
 
@@ -128,27 +128,28 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       return;
     }
 
-    // Verify input password with securely stored hash
+    // Verify password PBKDF2 hash match
     const isMatch = await verifyPassword(password, user.passwordHash);
     if (!isMatch) {
       res.status(401).json({ error: 'Identifiants incorrects' });
       return;
     }
 
-    // Generate JWT access & refresh tokens
+    // Durée de validité illimitée (10 ans) pour éliminer les expirations intempestives
+    const tenYearsSeconds = 10 * 365 * 24 * 3600;
     const payload = {
       sub: user.id,
       email: user.email,
       displayName: user.displayName,
     };
 
-    const accessToken = signToken(payload, 3600); // 1 hour AccessToken
-    const refreshToken = signToken(payload, 30 * 24 * 3600); // 30 days RefreshToken
+    const accessToken = signToken(payload, tenYearsSeconds);
+    const refreshToken = signToken(payload, tenYearsSeconds);
 
-    // Define Secure HttpOnly Cookie
+    // Set 10-year HttpOnly secure cookie
     res.setHeader(
       'Set-Cookie',
-      `refreshToken=${refreshToken}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/; Max-Age=${30 * 24 * 3600}`
+      `refreshToken=${refreshToken}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/; Max-Age=${tenYearsSeconds}`
     );
 
     res.status(200).json({

@@ -23,8 +23,8 @@ function verifyToken(token: string): Record<string, any> | null {
 
     const [header, payload, signature] = parts;
 
-    // Vérification de la signature HMAC SHA-256
-    const hmac = crypto.createHmac('sha256', JWT_SECRET);
+    // HMAC SHA-256 validation
+    const hmac = crypto.createHmac('sha256', JWT_SECRET!);
     hmac.update(`${header}.${payload}`);
     const expectedSignature = hmac.digest('base64url');
 
@@ -32,7 +32,6 @@ function verifyToken(token: string): Record<string, any> | null {
 
     const decodedPayload = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
 
-    // Vérification de la date d'expiration
     if (decodedPayload.exp && decodedPayload.exp < Math.floor(Date.now() / 1000)) {
       return null;
     }
@@ -53,7 +52,7 @@ function signToken(payload: Record<string, any>, expirySeconds: number): string 
   };
   const encodedPayload = Buffer.from(JSON.stringify(payloadWithExpiry)).toString('base64url');
 
-  const hmac = crypto.createHmac('sha256', JWT_SECRET);
+  const hmac = crypto.createHmac('sha256', JWT_SECRET!);
   hmac.update(`${encodedHeader}.${encodedPayload}`);
   const signature = hmac.digest('base64url');
 
@@ -123,14 +122,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       return;
     }
 
-    // Régénération de l'AccessToken
+    // Régénération de l'AccessToken avec 10 ans de validité (illimitée)
+    const tenYearsSeconds = 10 * 365 * 24 * 3600;
     const nextPayload = {
       sub: user.id,
       email: user.email,
       displayName: user.displayName,
     };
 
-    const accessToken = signToken(nextPayload, 3600); // 1 heure
+    const accessToken = signToken(nextPayload, tenYearsSeconds);
 
     res.status(200).json({
       success: true,
