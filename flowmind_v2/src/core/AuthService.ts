@@ -268,7 +268,7 @@ class AuthServiceImpl {
           token: data.accessToken,
           user: data.user,
           issuedAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+          expiresAt: new Date(Date.now() + 10 * 365 * 24 * 3600 * 1000).toISOString(),
         };
 
         onTokenRefreshed(data.accessToken);
@@ -325,13 +325,15 @@ class AuthServiceImpl {
       // offline fallback
     }
 
+    const clientUserId = uid('usr');
+
     // Enregistrement en base distante (Prisma)
     let remoteSuccess = false;
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, displayName }),
+        body: JSON.stringify({ id: clientUserId, email, password, displayName }),
       });
       if (res.ok) {
         remoteSuccess = true;
@@ -354,7 +356,7 @@ class AuthServiceImpl {
 
     const now = new Date().toISOString();
     const user: StoredUser = {
-      id: uid('usr'),
+      id: clientUserId,
       email,
       displayName,
       passwordHash: await hashPassword(password),
@@ -406,7 +408,7 @@ class AuthServiceImpl {
           token: data.accessToken,
           user: data.user,
           issuedAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+          expiresAt: new Date(Date.now() + 10 * 365 * 24 * 3600 * 1000).toISOString(),
         };
 
         // Enregistre également en local pour le offline mode
@@ -423,6 +425,10 @@ class AuthServiceImpl {
             lastLoginAt: new Date().toISOString(),
           };
           users.push(localUser);
+          saveUsers(users);
+        } else {
+          // Si l'utilisateur local existe, on aligne son ID sur celui du serveur (anti-deadlock)
+          localUser.id = data.user.id;
           saveUsers(users);
         }
 
@@ -455,7 +461,7 @@ class AuthServiceImpl {
           token: memoryAccessToken,
           user: toPublicUser(user),
           issuedAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+          expiresAt: new Date(Date.now() + 10 * 365 * 24 * 3600 * 1000).toISOString(),
         };
 
         EventBus.publish(AppEvents.AUTH_SIGNED_IN, { session: this.session });
