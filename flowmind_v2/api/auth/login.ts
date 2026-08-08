@@ -12,12 +12,7 @@ interface ApiResponse extends ServerResponse {
   json: (body: unknown) => void;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not defined');
-}
-
-function signToken(payload: Record<string, any>, expirySeconds: number): string {
+function signToken(payload: Record<string, any>, expirySeconds: number, secret: string): string {
   const header = { alg: 'HS256', typ: 'JWT' };
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
 
@@ -27,7 +22,7 @@ function signToken(payload: Record<string, any>, expirySeconds: number): string 
   };
   const encodedPayload = Buffer.from(JSON.stringify(payloadWithExpiry)).toString('base64url');
 
-  const hmac = crypto.createHmac('sha256', JWT_SECRET!);
+  const hmac = crypto.createHmac('sha256', secret);
   hmac.update(`${encodedHeader}.${encodedPayload}`);
   const signature = hmac.digest('base64url');
 
@@ -90,6 +85,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     };
   }
 
+  // Handle missing environment variable dynamically to prevent top-level 500 crashes
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    res.status(500).json({
+      success: false,
+      error: 'Configuration Error: JWT_SECRET environment variable is missing on the server.',
+    });
+    return;
+  }
+
   // Apply Rate Limiter middleware
   await runMiddleware(req, res, rateLimiter);
   if (res.writableEnded) return;
@@ -135,7 +140,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       return;
     }
 
-    // Durée de validité illimitée (10 ans) pour éliminer les expirations intempestives
+    // Durée de validité de 10 ans
     const tenYearsSeconds = 10 * 365 * 24 * 3600;
     const payload = {
       sub: user.id,
@@ -143,8 +148,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       displayName: user.displayName,
     };
 
-    const accessToken = signToken(payload, tenYearsSeconds);
-    const refreshToken = signToken(payload, tenYearsSeconds);
+    const accessToken = signToken(payload, tenYearsSeconds, JWT_SECRET);
+    const refreshToken = signToken(payload, tenYearsSeconds, JWT_SECRET);
 
     // Set 10-year HttpOnly secure cookie
     res.setHeader(

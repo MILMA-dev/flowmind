@@ -12,12 +12,7 @@ interface ApiResponse extends ServerResponse {
   json: (body: unknown) => void;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not defined');
-}
-
-function signToken(payload: Record<string, any>, expirySeconds: number): string {
+function signToken(payload: Record<string, any>, expirySeconds: number, secret: string): string {
   const header = { alg: 'HS256', typ: 'JWT' };
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
 
@@ -27,7 +22,7 @@ function signToken(payload: Record<string, any>, expirySeconds: number): string 
   };
   const encodedPayload = Buffer.from(JSON.stringify(payloadWithExpiry)).toString('base64url');
 
-  const hmac = crypto.createHmac('sha256', JWT_SECRET!);
+  const hmac = crypto.createHmac('sha256', secret);
   hmac.update(`${encodedHeader}.${encodedPayload}`);
   const signature = hmac.digest('base64url');
 
@@ -86,6 +81,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       this.setHeader('Content-Type', 'application/json');
       this.end(JSON.stringify(body));
     };
+  }
+
+  // Handle missing environment variable dynamically
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    res.status(500).json({
+      success: false,
+      error: 'Configuration Error: JWT_SECRET environment variable is missing on the server.',
+    });
+    return;
   }
 
   // Apply Rate Limiter middleware
@@ -149,8 +154,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       displayName: newUser.displayName,
     };
 
-    const accessToken = signToken(payload, tenYearsSeconds);
-    const refreshToken = signToken(payload, tenYearsSeconds);
+    const accessToken = signToken(payload, tenYearsSeconds, JWT_SECRET);
+    const refreshToken = signToken(payload, tenYearsSeconds, JWT_SECRET);
 
     // Cookie de validité de 10 ans
     res.setHeader(

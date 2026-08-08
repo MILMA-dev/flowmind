@@ -15,11 +15,6 @@ interface ApiResponse extends ServerResponse {
   json: (body: unknown) => void;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not defined');
-}
-
 function setCors(res: ApiResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -27,7 +22,7 @@ function setCors(res: ApiResponse): void {
   res.setHeader('Cache-Control', 'no-store');
 }
 
-function getUserIdFromRequest(req: ApiRequest): string {
+function getUserIdFromRequest(req: ApiRequest, secret: string): string {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     throw new Error('UNAUTHORIZED: Missing Authorization header');
@@ -44,7 +39,7 @@ function getUserIdFromRequest(req: ApiRequest): string {
   }
 
   const [header, payload, signature] = parts;
-  const hmac = crypto.createHmac('sha256', JWT_SECRET);
+  const hmac = crypto.createHmac('sha256', secret);
   hmac.update(`${header}.${payload}`);
   const expectedSignature = hmac.digest('base64url');
 
@@ -97,6 +92,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     };
   }
 
+  // Handle missing environment variable dynamically
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    res.status(500).json({
+      success: false,
+      error: 'Configuration Error: JWT_SECRET environment variable is missing on the server.',
+    });
+    return;
+  }
+
   // Apply Rate Limiter middleware
   await runMiddleware(req, res, rateLimiter);
   if (res.writableEnded) return;
@@ -114,7 +119,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   }
 
   try {
-    const userId = getUserIdFromRequest(req);
+    const userId = getUserIdFromRequest(req, JWT_SECRET);
 
     const lastSyncedAtQuery = req.query.lastSyncedAt || req.query.lastSynced;
     const lastSyncedAtStr = Array.isArray(lastSyncedAtQuery) ? lastSyncedAtQuery[0] : lastSyncedAtQuery;
