@@ -1,6 +1,7 @@
 import { db, type OfflineMutation } from '../storage/IndexedDBAdapter';
 import { OfflineMutationQueue } from '../storage/OfflineMutationQueue';
 import { RemoteDatabaseAdapter } from '../storage/RemoteDatabaseAdapter';
+import { ScopeManager } from '../storage/ScopeManager';
 import { EventBus } from '../EventBus';
 import { AppEvents } from '../Types';
 
@@ -34,29 +35,12 @@ export class OfflineQueueProcessor {
 
     const currentToken = RemoteDatabaseAdapter.getAuthToken();
     if (!currentToken) {
-      console.warn('[OfflineQueueProcessor] Impossible de dépiler : utilisateur non authentifié (pas de token JWT)');
+      console.warn('[OfflineQueueProcessor] Impossible de dépiler : utilisateur non authentifié (pas de session active)');
       return;
     }
 
-    // Extraction de userId depuis le JWT token de façon défensive (compatible navigateur)
-    let userId = 'unknown';
-    try {
-      const parts = currentToken.split('.');
-      if (parts.length === 3) {
-        const base64Url = parts[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(
-          window.atob(base64)
-            .split('')
-            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-            .join('')
-        );
-        const decoded = JSON.parse(jsonPayload);
-        userId = decoded.sub || decoded.id || decoded.userId || 'unknown';
-      }
-    } catch {
-      // ignore
-    }
+    // Récupération de l'userId actif de façon ultra-sécurisée via le ScopeManager
+    const userId = ScopeManager.getUserId() || 'guest';
 
     this.isProcessing = true;
     console.log('[OfflineQueueProcessor] Début de traitement de la file...');
