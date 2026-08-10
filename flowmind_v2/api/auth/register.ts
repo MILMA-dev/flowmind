@@ -12,28 +12,6 @@ interface ApiResponse extends ServerResponse {
   json: (body: unknown) => void;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not defined');
-}
-
-function signToken(payload: Record<string, any>, expirySeconds: number): string {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
-
-  const payloadWithExpiry = {
-    ...payload,
-    exp: Math.floor(Date.now() / 1000) + expirySeconds,
-  };
-  const encodedPayload = Buffer.from(JSON.stringify(payloadWithExpiry)).toString('base64url');
-
-  const hmac = crypto.createHmac('sha256', JWT_SECRET!);
-  hmac.update(`${encodedHeader}.${encodedPayload}`);
-  const signature = hmac.digest('base64url');
-
-  return `${encodedHeader}.${encodedPayload}.${signature}`;
-}
-
 async function hashPassword(password: string, salt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     crypto.pbkdf2(password, salt, 10000, 64, 'sha512', (err, derivedKey) => {
@@ -130,38 +108,33 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     const hashedPassword = await hashPassword(password, salt);
     const dbPasswordHash = `${salt}:${hashedPassword}`;
 
-    // On utilise l'ID généré par le client s'il est fourni pour assurer une cohérence d'ID absolue (anti-deadlock)
+    // Génération d'un jeton de session opaque aléatoire (OWASP - Pas de JWT)
+    const opaqueSessionToken = crypto.randomBytes(32).toString('hex');
+
     const newUser = await prisma.user.create({
       data: {
         id: id || crypto.randomUUID(),
         email: emailNorm,
         displayName: displayName || emailNorm.split('@')[0],
         passwordHash: dbPasswordHash,
+        sessionToken: opaqueSessionToken,
         emailVerified: true,
       },
     });
 
-    // Durée de validité illimitée (10 ans) pour éliminer les expirations intempestives
+    // Validité illimitée de 10 ans
     const tenYearsSeconds = 10 * 365 * 24 * 3600;
-    const payload = {
-      sub: newUser.id,
-      email: newUser.email,
-      displayName: newUser.displayName,
-    };
 
-    const accessToken = signToken(payload, tenYearsSeconds);
-    const refreshToken = signToken(payload, tenYearsSeconds);
-
-    // Cookie de validité de 10 ans
+    // Cookie de validité de 10 ans avec le jeton opaque
     res.setHeader(
       'Set-Cookie',
-      `refreshToken=${refreshToken}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/; Max-Age=${tenYearsSeconds}`
+      `refreshToken=${opaqueSessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/; Max-Age=${tenYearsSeconds}`
     );
 
     res.status(201).json({
       success: true,
       message: 'Compte créé avec succès',
-      accessToken,
+      accessToken: opaqueSessionToken,
       user: {
         id: newUser.id,
         email: newUser.email,

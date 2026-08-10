@@ -11,54 +11,6 @@ interface ApiResponse extends ServerResponse {
   json: (body: unknown) => void;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not defined');
-}
-
-function verifyToken(token: string): Record<string, any> | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-
-    const [header, payload, signature] = parts;
-
-    // HMAC SHA-256 validation
-    const hmac = crypto.createHmac('sha256', JWT_SECRET!);
-    hmac.update(`${header}.${payload}`);
-    const expectedSignature = hmac.digest('base64url');
-
-    if (signature !== expectedSignature) return null;
-
-    const decodedPayload = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-
-    if (decodedPayload.exp && decodedPayload.exp < Math.floor(Date.now() / 1000)) {
-      return null;
-    }
-
-    return decodedPayload;
-  } catch {
-    return null;
-  }
-}
-
-function signToken(payload: Record<string, any>, expirySeconds: number): string {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
-
-  const payloadWithExpiry = {
-    ...payload,
-    exp: Math.floor(Date.now() / 1000) + expirySeconds,
-  };
-  const encodedPayload = Buffer.from(JSON.stringify(payloadWithExpiry)).toString('base64url');
-
-  const hmac = crypto.createHmac('sha256', JWT_SECRET!);
-  hmac.update(`${encodedHeader}.${encodedPayload}`);
-  const signature = hmac.digest('base64url');
-
-  return `${encodedHeader}.${encodedPayload}.${signature}`;
-}
-
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
   const list: Record<string, string> = {};
   if (!cookieHeader) return list;
@@ -107,34 +59,36 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       return;
     }
 
-    const payload = verifyToken(refreshToken);
-    if (!payload || !payload.sub) {
-      res.status(401).json({ error: 'Refresh token invalide ou expiré' });
-      return;
-    }
-
+    // Récupération de l'utilisateur associé au jeton de session opaque en base de données
     const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
+      where: { sessionToken: refreshToken },
     });
 
     if (!user) {
-      res.status(401).json({ error: 'Utilisateur introuvable' });
+      res.status(401).json({ error: 'Session invalide ou expirée' });
       return;
     }
 
-    // Régénération de l'AccessToken avec 10 ans de validité (illimitée)
-    const tenYearsSeconds = 10 * 365 * 24 * 3600;
-    const nextPayload = {
-      sub: user.id,
-      email: user.email,
-      displayName: user.displayName,
-    };
+    // Régénération d'un nouveau jeton de session opaque pour la rotation de session (OWASP Hardening)
+    const nextOpaqueSessionToken = crypto.randomBytes(32).toString('hex');
 
-    const accessToken = signToken(nextPayload, tenYearsSeconds);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { sessionToken: nextOpaqueSessionToken },
+    });
+
+    // Validité illimitée de 10 ans
+    const tenYearsSeconds = 10 * 365 * 24 * 3600;
+
+    // Cookie de validité de 10 ans avec le jeton opaque
+    res.setHeader(
+      'Set-Cookie',
+      `refreshToken=${nextOpaqueSessionToken}; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/; Max-Age=${tenYearsSeconds}`
+    );
 
     res.status(200).json({
       success: true,
-      accessToken,
+      accessToken: nextOpaqueSessionToken,
       user: {
         id: user.id,
         email: user.email,

@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import crypto from 'crypto';
 import { prisma } from '../client.js';
 import rateLimiter from '../middleware/rateLimiter.js';
 
@@ -15,11 +14,6 @@ interface ApiResponse extends ServerResponse {
   json: (body: unknown) => void;
 }
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not defined');
-}
-
 function setCors(res: ApiResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -27,7 +21,7 @@ function setCors(res: ApiResponse): void {
   res.setHeader('Cache-Control', 'no-store');
 }
 
-function getUserIdFromRequest(req: ApiRequest): string {
+async function getUserIdFromRequest(req: ApiRequest): Promise<string> {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     throw new Error('UNAUTHORIZED: Missing Authorization header');
@@ -37,36 +31,16 @@ function getUserIdFromRequest(req: ApiRequest): string {
     throw new Error('UNAUTHORIZED: Empty token');
   }
 
-  // Pure cryptographic JWT signature verification against JWT_SECRET
-  const parts = token.split('.');
-  if (parts.length !== 3) {
-    throw new Error('UNAUTHORIZED: Invalid JWT format');
+  // Résout la session opaque de façon sécurisée directement contre la base PostgreSQL
+  const user = await prisma.user.findUnique({
+    where: { sessionToken: token },
+  });
+
+  if (!user) {
+    throw new Error('UNAUTHORIZED: Invalid or expired session token');
   }
 
-  const [header, payload, signature] = parts;
-  const hmac = crypto.createHmac('sha256', JWT_SECRET);
-  hmac.update(`${header}.${payload}`);
-  const expectedSignature = hmac.digest('base64url');
-
-  if (signature !== expectedSignature) {
-    throw new Error('UNAUTHORIZED: JWT signature verification failed');
-  }
-
-  try {
-    const decodedPayload = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    // Verify token expiry
-    if (decodedPayload.exp && decodedPayload.exp < Math.floor(Date.now() / 1000)) {
-      throw new Error('UNAUTHORIZED: Token has expired');
-    }
-    const userId = decodedPayload.sub || decodedPayload.id || decodedPayload.userId;
-    if (userId) {
-      return userId;
-    }
-  } catch {
-    throw new Error('UNAUTHORIZED: Failed to decode JWT payload');
-  }
-
-  throw new Error('UNAUTHORIZED: User context missing in JWT');
+  return user.id;
 }
 
 function runMiddleware(req: any, res: any, fn: any) {
@@ -114,7 +88,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   }
 
   try {
-    const userId = getUserIdFromRequest(req);
+    const userId = await getUserIdFromRequest(req);
 
     const lastSyncedAtQuery = req.query.lastSyncedAt || req.query.lastSynced;
     const lastSyncedAtStr = Array.isArray(lastSyncedAtQuery) ? lastSyncedAtQuery[0] : lastSyncedAtQuery;

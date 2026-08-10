@@ -2,6 +2,8 @@
  * Vercel Serverless — registre cloud multi-appareils (same-origin)
  * Mises à jour atomiques avec ETag (If-Match) pour éviter d'effacer
  * les users lors d'un push concurrent de snapshots.
+ *
+ * Converti en ES Modules (ESM) pour la compatibilité de build Vercel.
  */
 
 const DEFAULT_BLOB_ID = '019fd80b-b576-7082-8300-c1759024b30a';
@@ -163,7 +165,7 @@ async function atomicMutate(mutator) {
   throw lastErr || new Error('CAS_EXHAUSTED');
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -270,4 +272,4 @@ module.exports = async function handler(req, res) {
       error: String(err?.message || err),
     });
   }
-};
+}
